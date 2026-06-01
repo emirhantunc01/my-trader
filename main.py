@@ -11,7 +11,13 @@ from pathlib import Path
 from tradebot.backtest import run_portfolio_backtest
 from tradebot.config import BacktestConfig
 from tradebot.data import download_universe
-from tradebot.mt5_adapter import account_snapshot, fetch_universe_rates, latest_bid_ask, mt5_session
+from tradebot.mt5_adapter import (
+    account_snapshot,
+    fetch_universe_rates,
+    fetch_universe_timeframe_rates,
+    latest_bid_ask,
+    mt5_session,
+)
 from tradebot.mt5_trader import evaluate_and_execute_demo, load_demo_state, save_demo_state
 from tradebot.pairs import run_pairs_backtest
 from tradebot.paper import evaluate_symbol_once, load_state, paper_summary, save_state
@@ -90,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--paper-state", default="paper_state.json")
     parser.add_argument("--paper-balance", type=float, default=10_000.0)
     parser.add_argument("--paper-reset", action="store_true")
-    parser.add_argument("--paper-bars", type=int, default=350)
+    parser.add_argument("--paper-bars", type=int, default=500)
     parser.add_argument("--mt5-timeframe", default="M15")
     parser.add_argument("--mt5-terminal-path")
     parser.add_argument("--mt5-login", type=int)
@@ -108,9 +114,23 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--demo-volume", type=float, default=0.01)
     parser.add_argument("--demo-deviation", type=int, default=20)
-    parser.add_argument("--demo-stop-atr", type=float, default=1.2)
-    parser.add_argument("--demo-take-profit-atr", type=float, default=0.8)
-    parser.add_argument("--demo-max-hold-minutes", type=float)
+    parser.add_argument("--demo-stop-atr", type=float, default=1.0)
+    parser.add_argument("--demo-take-profit-atr", type=float, default=0.5)
+    parser.add_argument("--demo-max-hold-minutes", type=float, default=15.0)
+    parser.add_argument("--demo-analysis-timeframe", help="Primary demo timeframe. Scalp defaults to M1.")
+    parser.add_argument("--demo-confirm-timeframe", default="M5")
+    parser.add_argument("--demo-signal-timeframe", default="M15")
+    parser.add_argument("--demo-max-positions-per-direction", type=int, default=3)
+    parser.add_argument("--demo-pyramid-step-pct", type=float, default=0.005)
+    parser.add_argument("--demo-pyramid-add-volume-pct", type=float, default=0.50)
+    parser.add_argument("--demo-pyramid-stop-atr", type=float, default=1.5)
+    parser.add_argument("--demo-partial-first-profit-pct", type=float, default=0.003)
+    parser.add_argument("--demo-partial-second-profit-pct", type=float, default=0.006)
+    parser.add_argument("--demo-partial-first-volume-pct", type=float, default=0.30)
+    parser.add_argument("--demo-partial-second-volume-pct", type=float, default=0.50)
+    parser.add_argument("--demo-trailing-stop-atr", type=float, default=1.2)
+    parser.add_argument("--demo-signal-cooldown-bars", type=int, default=2)
+    parser.add_argument("--demo-close-all-profit-pct", type=float, default=0.01)
     parser.add_argument("--demo-allow-short", action="store_true")
     parser.add_argument("--demo-state", default="demo_state.json")
     parser.add_argument("--demo-reset", action="store_true")
@@ -281,6 +301,9 @@ def run_execute_demo(args: argparse.Namespace, config: BacktestConfig) -> None:
     mt5_password = args.mt5_password or os.environ.get("MT5_PASSWORD")
     if args.mt5_login and args.mt5_server and not mt5_password:
         mt5_password = getpass.getpass("MT5 password: ")
+    is_scalp = exec_config.strategy == "scalp"
+    analysis_timeframe = args.demo_analysis_timeframe or ("M1" if is_scalp else args.mt5_timeframe)
+    history_bars = max(int(args.paper_bars), 500) if analysis_timeframe.upper() == "M1" else int(args.paper_bars)
 
     with mt5_session(
         terminal_path=args.mt5_terminal_path,
@@ -296,6 +319,10 @@ def run_execute_demo(args: argparse.Namespace, config: BacktestConfig) -> None:
             print("Mode        : DRY_RUN (signals only, no MT5 orders)")
         else:
             print("Mode        : LIVE_DEMO_ORDERS (bot sends/closes demo orders)")
+        print(f"Timeframes  : primary={analysis_timeframe}", end="")
+        if is_scalp:
+            print(f" confirm={args.demo_confirm_timeframe} signal={args.demo_signal_timeframe}", end="")
+        print(f" bars={history_bars}")
 
         cycle = 0
         sleep_seconds = max(1.0, float(args.sleep_seconds))
@@ -313,14 +340,38 @@ def run_execute_demo(args: argparse.Namespace, config: BacktestConfig) -> None:
                 print(f"\nDemo execution decisions | cycle={cycle} | {timestamp}")
 
                 try:
-                    data = fetch_universe_rates(
-                        mt5,
-                        tuple(config.symbols),
-                        timeframe=args.mt5_timeframe,
-                        bars=args.paper_bars,
-                    )
+                    if is_scalp:
+                        data = fetch_universe_timeframe_rates(
+                            mt5,
+                            tuple(config.symbols),
+                            timeframes={
+                                "primary": analysis_timeframe,
+                                "confirm": args.demo_confirm_timeframe,
+                                "signal": args.demo_signal_timeframe,
+                            },
+                            bars={
+                                "primary": history_bars,
+                                "confirm": max(200, history_bars),
+                                "signal": max(200, history_bars),
+                            },
+                        )
+                    else:
+                        data = fetch_universe_rates(
+                            mt5,
+                            tuple(config.symbols),
+                            timeframe=analysis_timeframe,
+                            bars=history_bars,
+                        )
 
-                    for symbol, df in data.items():
+                    for symbol, frames in data.items():
+                        if is_scalp:
+                            df = frames["primary"]
+                            confirm_df = frames["confirm"]
+                            signal_df = frames["signal"]
+                        else:
+                            df = frames
+                            confirm_df = None
+                            signal_df = None
                         decision = evaluate_and_execute_demo(
                             mt5=mt5,
                             symbol=symbol,
@@ -337,6 +388,19 @@ def run_execute_demo(args: argparse.Namespace, config: BacktestConfig) -> None:
                             trade_current_signal=args.demo_trade_current_signal,
                             dry_run=args.demo_dry_run,
                             debug_signals=args.debug_signals,
+                            confirm_raw_df=confirm_df,
+                            signal_raw_df=signal_df,
+                            max_positions_per_direction=args.demo_max_positions_per_direction,
+                            pyramid_step_pct=args.demo_pyramid_step_pct,
+                            pyramid_add_volume_pct=args.demo_pyramid_add_volume_pct,
+                            pyramid_stop_atr=args.demo_pyramid_stop_atr,
+                            partial_first_profit_pct=args.demo_partial_first_profit_pct,
+                            partial_second_profit_pct=args.demo_partial_second_profit_pct,
+                            partial_first_volume_pct=args.demo_partial_first_volume_pct,
+                            partial_second_volume_pct=args.demo_partial_second_volume_pct,
+                            trailing_stop_atr=args.demo_trailing_stop_atr,
+                            signal_cooldown_bars=args.demo_signal_cooldown_bars,
+                            close_all_profit_pct=args.demo_close_all_profit_pct,
                         )
                         position_text = ""
                         if decision.position_volume > 0:

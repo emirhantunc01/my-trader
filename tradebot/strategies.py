@@ -69,8 +69,17 @@ class ScalpStrategy(Strategy):
     def __init__(self, config: BacktestConfig) -> None:
         super().__init__(config=config, name="scalp")
 
-    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+    @staticmethod
+    def _add_scalp_metrics(df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
+        df["atr_std_20"] = df["atr"].rolling(20, min_periods=5).std()
+        df["atr_std_20_mean"] = df["atr_std_20"].rolling(20, min_periods=5).mean()
+        df["m1_uptrend"] = (df["Close"] > df["ema_8"]) & (df["ema_8"] > df["ema_21"])
+        df["m1_downtrend"] = (df["Close"] < df["ema_8"]) & (df["ema_8"] < df["ema_21"])
+        return df
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = self._add_scalp_metrics(df)
         volume_ok = ~df["volume_pump"]
 
         df["long_score"] = (
@@ -89,6 +98,76 @@ class ScalpStrategy(Strategy):
         df["buy_signal"] = (df["long_score"] >= 3) & volume_ok
         df["sell_signal"] = (df["short_score"] >= 3) & volume_ok
         return df
+
+    def generate_multi_timeframe_signals(
+        self,
+        primary_df: pd.DataFrame,
+        confirm_df: pd.DataFrame | None = None,
+        signal_df: pd.DataFrame | None = None,
+    ) -> pd.DataFrame:
+        primary = self.generate_signals(primary_df).sort_index()
+        primary["m1_buy_signal"] = primary["buy_signal"]
+        primary["m1_sell_signal"] = primary["sell_signal"]
+
+        if confirm_df is not None and not confirm_df.empty:
+            confirm = self._add_scalp_metrics(confirm_df).sort_index()
+            confirm["m5_uptrend"] = (confirm["Close"] > confirm["ema_8"]) & (
+                confirm["ema_8"] > confirm["ema_21"]
+            )
+            confirm["m5_downtrend"] = (confirm["Close"] < confirm["ema_8"]) & (
+                confirm["ema_8"] < confirm["ema_21"]
+            )
+            primary = pd.merge_asof(
+                primary,
+                confirm[["m5_uptrend", "m5_downtrend"]],
+                left_index=True,
+                right_index=True,
+                direction="backward",
+            )
+        else:
+            primary["m5_uptrend"] = primary["m1_uptrend"]
+            primary["m5_downtrend"] = primary["m1_downtrend"]
+
+        if signal_df is not None and not signal_df.empty:
+            signal = self.generate_signals(signal_df).sort_index()
+            signal = signal.rename(
+                columns={
+                    "buy_signal": "m15_buy_signal",
+                    "sell_signal": "m15_sell_signal",
+                    "signal_score": "m15_signal_score",
+                }
+            )
+            primary = pd.merge_asof(
+                primary,
+                signal[["m15_buy_signal", "m15_sell_signal", "m15_signal_score"]],
+                left_index=True,
+                right_index=True,
+                direction="backward",
+            )
+        else:
+            primary["m15_buy_signal"] = primary["m1_buy_signal"]
+            primary["m15_sell_signal"] = primary["m1_sell_signal"]
+            primary["m15_signal_score"] = primary["signal_score"]
+
+        volume_ok = ~primary["volume_pump"].fillna(False)
+        m1_long_ok = (primary["long_score"] >= 2) & volume_ok
+        m1_short_ok = (primary["short_score"] >= 2) & volume_ok
+        primary["buy_signal"] = (
+            primary["m15_buy_signal"].fillna(False)
+            & primary["m5_uptrend"].fillna(False)
+            & m1_long_ok
+        )
+        primary["sell_signal"] = (
+            primary["m15_sell_signal"].fillna(False)
+            & primary["m5_downtrend"].fillna(False)
+            & m1_short_ok
+        )
+        primary["signal_score"] = (
+            primary["long_score"]
+            - primary["short_score"]
+            + primary["m15_signal_score"].fillna(0)
+        )
+        return primary
 
 
 class MeanReversionStrategy(Strategy):

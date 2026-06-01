@@ -139,6 +139,31 @@ def fetch_universe_rates(
     return {symbol: fetch_rates(mt5, symbol, timeframe, bars) for symbol in symbols}
 
 
+def fetch_timeframe_rates(
+    mt5,
+    symbol: str,
+    timeframes: dict[str, str],
+    bars: int | dict[str, int],
+) -> dict[str, pd.DataFrame]:
+    frames = {}
+    for label, timeframe in timeframes.items():
+        timeframe_bars = bars[label] if isinstance(bars, dict) else bars
+        frames[label] = fetch_rates(mt5, symbol, timeframe, int(timeframe_bars))
+    return frames
+
+
+def fetch_universe_timeframe_rates(
+    mt5,
+    symbols: tuple[str, ...],
+    timeframes: dict[str, str],
+    bars: int | dict[str, int],
+) -> dict[str, dict[str, pd.DataFrame]]:
+    return {
+        symbol: fetch_timeframe_rates(mt5, symbol, timeframes, bars)
+        for symbol in symbols
+    }
+
+
 def latest_bid_ask(mt5, symbol: str) -> tuple[float, float]:
     ensure_symbol(mt5, symbol)
     tick = mt5.symbol_info_tick(symbol)

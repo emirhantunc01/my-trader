@@ -49,6 +49,33 @@ CSV ve grafik raporu kaydetmek:
 python main.py --symbols AAPL --period 3y --strategy core-satellite --save-reports
 ```
 
+MetaTrader 5 fiyat verisiyle sanal bakiye/paper trading:
+
+```powershell
+python main.py --paper --paper-source mt5 --symbols EURUSD --strategy trend --mt5-timeframe M15 --paper-balance 10000
+```
+
+MT5 terminali zaten acik ve hesaba giris yapmis durumdaysa genelde login bilgisi vermek gerekmez.
+Belirli bir demo hesaba baglanmak icin:
+
+```powershell
+$env:MT5_PASSWORD="demo-password"
+python main.py --paper --paper-source mt5 --symbols EURUSD GBPUSD --strategy trend --mt5-timeframe M15 --mt5-login 123456 --mt5-server "Broker-Demo"
+Remove-Item Env:MT5_PASSWORD
+```
+
+Sanal portfoyu sifirlamak:
+
+```powershell
+python main.py --paper --paper-source mt5 --symbols EURUSD --paper-reset
+```
+
+MT5 olmadan paper motorunu hizli test etmek:
+
+```powershell
+python main.py --paper --paper-source yfinance --symbols AAPL MSFT --period 1y --strategy trend
+```
+
 ## Stratejiler
 
 - `core-satellite`: Sermayenin buy-and-hold cekirdegi + taktik trend islemleri.
@@ -82,6 +109,46 @@ python main.py --symbols AAPL --period 3y --strategy core-satellite --save-repor
 - `--compare` modu farkli stratejileri ayni semboller ve maliyet varsayimlariyla yan yana koyar.
 - Pairs trading raporu, islem sonucundan once korelasyon ve z-score uygunluk kontrolu basar.
 - Cok az islem, cok fazla islem veya zayif Sharpe gorulurse rapor bunu uyari olarak belirtir.
+
+## MetaTrader 5 Paper Mode
+
+- `--paper` modu MT5 terminalinden bar/tick verisi okuyabilir.
+- Emirler gercek/demo hesaba gonderilmez; kod `order_send` kullanmaz.
+- Sanal bakiye, acik pozisyonlar ve islem gecmisi `paper_state.json` dosyasinda tutulur.
+- Strateji sinyali son kapanmis bar uzerinden hesaplanir; cari bid/ask fiyati sanal emir fiyati olarak kullanilir.
+- Baslangic icin demo hesabi ve kucuk sembol listesi kullanmak daha guvenlidir.
+
+## MetaTrader 5 Demo Emir Modu
+
+Demo emir modu MT5 `order_send` kullanir, ancak sadece server adinda `Demo` gecen
+hesaplarda calisir. Varsayilan hacim `0.01` lottur. Strateji sinyal uretmezse emir
+gonderilmez.
+
+```powershell
+python main.py --execute-demo --confirm-demo-orders --symbols EURUSD --strategy trend --mt5-timeframe M15 --paper-bars 350 --demo-volume 0.01 --mt5-terminal-path "C:\Program Files\MetaTrader 5\terminal64.exe"
+```
+
+Coklu sembol:
+
+```powershell
+python main.py --execute-demo --confirm-demo-orders --symbols EURUSD GBPUSD USDJPY --strategy trend --mt5-timeframe M15 --demo-volume 0.01 --mt5-terminal-path "C:\Program Files\MetaTrader 5\terminal64.exe"
+```
+
+Surekli calistirmak:
+
+```powershell
+python main.py --execute-demo --confirm-demo-orders --symbols EURUSD GBPUSD USDJPY USDCAD SP500m --strategy trend --mt5-timeframe M15 --paper-bars 350 --demo-volume 0.01 --loop --sleep-seconds 1 --mt5-terminal-path "C:\Program Files\MetaTrader 5\terminal64.exe"
+```
+
+Loop modu `Ctrl+C` ile durdurulur. Ayni sembolde botun actigi pozisyon zaten aciksa
+yeniden alim emri yigilmaz; karar `POSITION_OPEN` olarak kalir. Kisa test icin:
+
+```powershell
+python main.py --execute-demo --confirm-demo-orders --symbols EURUSD --strategy trend --mt5-timeframe M15 --loop --sleep-seconds 1 --max-cycles 2 --mt5-terminal-path "C:\Program Files\MetaTrader 5\terminal64.exe"
+```
+
+Not: Bu mod gercek para hesabi icin tasarlanmamistir. Server adinda `Demo` yoksa
+bilerek hata verir ve emir gondermez.
 
 ## Not
 

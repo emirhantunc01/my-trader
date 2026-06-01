@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .yfinance_cache/
 outputs/
+paper_state*.json
 .vscode/
 .venv/
 venv/

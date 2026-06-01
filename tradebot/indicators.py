@@ -64,4 +64,8 @@ def add_common_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["volume_pump"] = volume > df["volume_ma30"] * 20
     df["zscore_20"] = rolling_zscore(close, 20)
 
+    # ATR Volatility Indicators for scalping volume adjustment
+    df["atr_std_20"] = df["atr"].rolling(window=20, min_periods=5).std()
+    df["atr_std_20_mean"] = df["atr_std_20"].rolling(window=20, min_periods=5).mean()
+
     return df.dropna().copy()

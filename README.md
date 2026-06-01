@@ -1,4 +1,4 @@
-# tradeBot 2
+# my-trader
 
 Python tabanli algoritmik ticaret arastirma ve backtest araci.
 

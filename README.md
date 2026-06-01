@@ -80,6 +80,8 @@ python main.py --paper --paper-source yfinance --symbols AAPL MSFT --period 1y -
 
 - `core-satellite`: Sermayenin buy-and-hold cekirdegi + taktik trend islemleri.
 - `trend`: EMA, ADX, MACD, RSI, CMF ve hacim filtresiyle long-only trend sistemi.
+- `fast-trend`: MT5 demo denemeleri icin daha gevsek EMA/MACD trend sistemi.
+- `scalp`: M1/M5 demo denemeleri icin daha hizli long/short sinyal sistemi.
 - `mean-reversion`: Bollinger Bands, RSI, MFI, CMF ve z-score ile ortalamaya donus sistemi.
 - `hybrid`: Trend ve mean-reversion sinyallerini birlestirir.
 - `pairs`: Iki varlik arasindaki spread z-score'una dayali market-neutral arastirma modu.
@@ -141,10 +143,31 @@ python main.py --execute-demo --confirm-demo-orders --symbols EURUSD GBPUSD USDJ
 ```
 
 Loop modu `Ctrl+C` ile durdurulur. Ayni sembolde botun actigi pozisyon zaten aciksa
-yeniden alim emri yigilmaz; karar `POSITION_OPEN` olarak kalir. Kisa test icin:
+yeniden alim emri yigilmaz; karar `POSITION_OPEN` olarak kalir. Demo emir modu
+son gorulen sinyal durumunu `demo_state.json` dosyasinda tutar. Bu sayede ayni
+kapanmis mumdaki buy sinyali tekrar tekrar islenmez; pozisyonu manuel kapatirsan
+bot ayni eski sinyal yuzunden hemen yeniden almaz, yeni bir buy sinyali bekler.
+Terminal ciktisinda `action` botun o dongude gercekten emir gonderip gondermedigini,
+`signal` ise stratejinin son kapanmis mum icin BUY/SELL/NONE kararini gosterir.
+
+Bot acildiginda zaten aktif olan buy sinyali varsayilan olarak izleme/warmup kabul
+edilir. O sinyale de girmek istersen `--demo-trade-current-signal` ekleyebilirsin.
+Hafizayi sifirlamak icin `--demo-reset` kullanilir. Kisa test icin:
 
 ```powershell
 python main.py --execute-demo --confirm-demo-orders --symbols EURUSD --strategy trend --mt5-timeframe M15 --loop --sleep-seconds 1 --max-cycles 2 --mt5-terminal-path "C:\Program Files\MetaTrader 5\terminal64.exe"
+```
+
+Emir gondermeden sinyal kosullarini gormek:
+
+```powershell
+python main.py --execute-demo --confirm-demo-orders --demo-dry-run --debug-signals --symbols EURUSD GBPUSD USDJPY AUDUSD NZDUSD USDCAD SP500m --strategy fast-trend --mt5-timeframe M15 --paper-bars 600 --max-cycles 1 --mt5-terminal-path "C:\Program Files\MetaTrader 5\terminal64.exe"
+```
+
+Hizli demo scalper ornegi:
+
+```powershell
+python main.py --execute-demo --confirm-demo-orders --symbols AMD MSFT INTC NVDA --strategy scalp --mt5-timeframe M1 --paper-bars 600 --demo-volume 0.01 --demo-stop-atr 0.8 --demo-take-profit-atr 0.5 --demo-max-hold-minutes 3 --demo-allow-short --demo-trade-current-signal --demo-state demo_state_scalp_stocks.json --loop --sleep-seconds 3 --mt5-terminal-path "C:\Program Files\MetaTrader 5\terminal64.exe"
 ```
 
 Not: Bu mod gercek para hesabi icin tasarlanmamistir. Server adinda `Demo` yoksa

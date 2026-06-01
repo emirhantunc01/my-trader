@@ -3,6 +3,7 @@ __pycache__/
 .yfinance_cache/
 outputs/
 paper_state*.json
+demo_state*.json
 .vscode/
 .venv/
 venv/

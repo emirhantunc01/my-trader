@@ -12,7 +12,7 @@ from tradebot.backtest import run_portfolio_backtest
 from tradebot.config import BacktestConfig
 from tradebot.data import download_universe
 from tradebot.mt5_adapter import account_snapshot, fetch_universe_rates, latest_bid_ask, mt5_session
-from tradebot.mt5_trader import evaluate_and_execute_demo
+from tradebot.mt5_trader import evaluate_and_execute_demo, load_demo_state, save_demo_state
 from tradebot.pairs import run_pairs_backtest
 from tradebot.paper import evaluate_symbol_once, load_state, paper_summary, save_state
 from tradebot.reports import (
@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         default="core-satellite",
-        choices=["core-satellite", "trend", "mean-reversion", "hybrid", "pairs"],
+        choices=["core-satellite", "trend", "fast-trend", "scalp", "mean-reversion", "hybrid", "pairs"],
     )
     parser.add_argument(
         "--compare",
@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
         "--compare-strategies",
         nargs="+",
         default=["core-satellite", "trend", "mean-reversion", "hybrid"],
-        choices=["core-satellite", "trend", "mean-reversion", "hybrid"],
+        choices=["core-satellite", "trend", "fast-trend", "scalp", "mean-reversion", "hybrid"],
         help="Strategies to include when --compare is used.",
     )
     parser.add_argument("--initial-capital", type=float, default=10_000.0)
@@ -108,6 +108,27 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--demo-volume", type=float, default=0.01)
     parser.add_argument("--demo-deviation", type=int, default=20)
+    parser.add_argument("--demo-stop-atr", type=float, default=1.2)
+    parser.add_argument("--demo-take-profit-atr", type=float, default=0.8)
+    parser.add_argument("--demo-max-hold-minutes", type=float)
+    parser.add_argument("--demo-allow-short", action="store_true")
+    parser.add_argument("--demo-state", default="demo_state.json")
+    parser.add_argument("--demo-reset", action="store_true")
+    parser.add_argument(
+        "--demo-dry-run",
+        action="store_true",
+        help="Evaluate demo signals without sending or closing MT5 orders.",
+    )
+    parser.add_argument(
+        "--debug-signals",
+        action="store_true",
+        help="Print indicator values and signal booleans for each evaluated symbol.",
+    )
+    parser.add_argument(
+        "--demo-trade-current-signal",
+        action="store_true",
+        help="Allow entering on the already-active signal seen when the bot starts.",
+    )
     parser.add_argument(
         "--loop",
         action="store_true",
@@ -255,6 +276,8 @@ def run_execute_demo(args: argparse.Namespace, config: BacktestConfig) -> None:
         core_position_pct=0.0,
     )
     strategy, _ = strategy_factory(exec_config)
+    demo_state_path = Path(args.demo_state)
+    demo_state = load_demo_state(demo_state_path, reset=args.demo_reset)
     mt5_password = args.mt5_password or os.environ.get("MT5_PASSWORD")
     if args.mt5_login and args.mt5_server and not mt5_password:
         mt5_password = getpass.getpass("MT5 password: ")
@@ -269,6 +292,10 @@ def run_execute_demo(args: argparse.Namespace, config: BacktestConfig) -> None:
         print("MT5 account snapshot:")
         for key, value in snapshot.items():
             print(f"{key:<12}: {value}")
+        if args.demo_dry_run:
+            print("Mode        : DRY_RUN (signals only, no MT5 orders)")
+        else:
+            print("Mode        : LIVE_DEMO_ORDERS (bot sends/closes demo orders)")
 
         cycle = 0
         sleep_seconds = max(1.0, float(args.sleep_seconds))
@@ -302,12 +329,31 @@ def run_execute_demo(args: argparse.Namespace, config: BacktestConfig) -> None:
                             config=exec_config,
                             volume=args.demo_volume,
                             deviation=args.demo_deviation,
+                            stop_atr=args.demo_stop_atr,
+                            take_profit_atr=args.demo_take_profit_atr,
+                            max_hold_minutes=args.demo_max_hold_minutes,
+                            allow_short=args.demo_allow_short,
+                            state=None if args.demo_dry_run else demo_state,
+                            trade_current_signal=args.demo_trade_current_signal,
+                            dry_run=args.demo_dry_run,
+                            debug_signals=args.debug_signals,
                         )
+                        position_text = ""
+                        if decision.position_volume > 0:
+                            position_text = (
+                                f" pos={decision.position_side}:{decision.position_volume:.4f}"
+                                f" entry={decision.position_entry:.5f}"
+                                f" pnl={decision.position_profit:.2f}"
+                            )
                         print(
                             f"{decision.symbol:<12} {decision.action:<12} "
-                            f"volume={decision.volume:.4f} price={decision.price:.5f} "
-                            f"sl={decision.sl:.5f} retcode={decision.retcode} {decision.reason}"
+                            f"signal={decision.signal:<4} "
+                            f"order_volume={decision.volume:.4f} price={decision.price:.5f} "
+                            f"sl={decision.sl:.5f} tp={decision.tp:.5f} retcode={decision.retcode}"
+                            f"{position_text} {decision.reason}"
                         )
+                    if not args.demo_dry_run:
+                        save_demo_state(demo_state_path, demo_state)
                 except Exception as exc:
                     print(f"Cycle {cycle} failed: {exc}")
                     if not args.loop:

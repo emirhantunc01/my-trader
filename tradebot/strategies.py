@@ -43,6 +43,54 @@ class TrendFollowingStrategy(Strategy):
         return df
 
 
+class FastTrendStrategy(Strategy):
+    def __init__(self, config: BacktestConfig) -> None:
+        super().__init__(config=config, name="fast-trend")
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        volume_ok = ~df["volume_pump"]
+
+        df["signal_score"] = (
+            (df["Close"] > df["ema_200"]).astype(int)
+            + (df["ema_8"] > df["ema_21"]).astype(int)
+            + (df["macd_hist"] > 0).astype(int)
+        )
+
+        df["buy_signal"] = (df["signal_score"] >= 2) & volume_ok
+        df["sell_signal"] = (
+            (df["Close"] < df["ema_200"])
+            | ((df["ema_8"] < df["ema_21"]) & (df["macd_hist"] < 0))
+        )
+        return df
+
+
+class ScalpStrategy(Strategy):
+    def __init__(self, config: BacktestConfig) -> None:
+        super().__init__(config=config, name="scalp")
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        volume_ok = ~df["volume_pump"]
+
+        df["long_score"] = (
+            (df["ema_8"] > df["ema_21"]).astype(int)
+            + (df["Close"] > df["ema_20"]).astype(int)
+            + (df["macd_hist"] > 0).astype(int)
+            + ((df["rsi"] > 45) & (df["rsi"] < 78)).astype(int)
+        )
+        df["short_score"] = (
+            (df["ema_8"] < df["ema_21"]).astype(int)
+            + (df["Close"] < df["ema_20"]).astype(int)
+            + (df["macd_hist"] < 0).astype(int)
+            + ((df["rsi"] > 22) & (df["rsi"] < 55)).astype(int)
+        )
+        df["signal_score"] = df["long_score"] - df["short_score"]
+        df["buy_signal"] = (df["long_score"] >= 3) & volume_ok
+        df["sell_signal"] = (df["short_score"] >= 3) & volume_ok
+        return df
+
+
 class MeanReversionStrategy(Strategy):
     def __init__(self, config: BacktestConfig) -> None:
         super().__init__(config=config, name="mean-reversion")
@@ -93,6 +141,10 @@ def strategy_factory(config: BacktestConfig) -> tuple[Strategy, float]:
     name = config.strategy.lower().strip()
     if name == "trend":
         return TrendFollowingStrategy(config), 0.0
+    if name == "fast-trend":
+        return FastTrendStrategy(config), 0.0
+    if name == "scalp":
+        return ScalpStrategy(config), 0.0
     if name == "mean-reversion":
         return MeanReversionStrategy(config), 0.0
     if name == "hybrid":
